@@ -59,7 +59,7 @@ def get_friends(request):
 		current_location = locations.get(fr_id)
 		if current_location:
 			base = current_location.base
-			info = {'fb_id':fr_id, 'base':base.name, 'latitude': base.longitude, 'longitude':base.latitude}
+			info = {'fb_id':fr_id, 'base':base.name, 'latitude': base.latitude, 'longitude':base.longitude}
 			my_friends.append(info)
 			base_friends[base.name].append(fr_id)
 			base_info[base.name] = info

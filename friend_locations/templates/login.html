@@ -152,18 +152,6 @@
 
   }
 
-  function getFriends() {
-    FB.api('/me/friends', function(response) {
-      if(response.data) {
-        $.each(response.data,function(index,friend) {
-          friends_list.push({'fb_id':friend.id,'name':friend.name});
-        });
-        } else {
-            console.log("Error!");
-        }
-    });
-  }
-
   // using jQuery
   function getCookie(name) {
       var cookieValue = null;
