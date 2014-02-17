@@ -1,0 +1,59 @@
+body {
+	//background:url("images/digi_camo.jpg");
+	padding: 0;
+	margin: 0;
+	font-family: Helvetica;
+	font-size: 12px;
+	height: 100%;
+}
+html { 
+	height: 100%;
+}
+
+.fb_login {
+	float:right;
+}
+
+.header {
+	background:url("images/connection.png");
+	background-size:80px 80px;
+	background-repeat:no-repeat;
+	background-color: orange;
+	background-position-y: 10px;
+	background-position-x: 10px;
+	height: 80px;
+	padding: 10px 0px 10px 0px;
+	width:100%;
+	
+}
+
+.header .main_title{
+	font-size: 28px;
+	float: left;
+	padding: 5px 15px 0px 110px;
+}
+.header .minor_title{
+	float: left;
+	font-size: 20px;
+	padding: 15px 0px 0px 0px;
+}
+
+#map_canvas{
+	height:80%;
+}
+
+#submit_base{
+	background: orange;
+	padding: 10px;
+}
+
+#my_base{
+	background: orange;
+	display: none;
+	padding: 10px;
+}
+
+#update_base{
+	font-size: .8em;
+	padding-left: 10px;
+}

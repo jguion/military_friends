@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <link rel="stylesheet" href="/static/main.css" type="text/css" />
+    <link rel="stylesheet" href="http://code.jquery.com/ui/1.10.2/themes/smoothness/jquery-ui.css" />
+    <script type="text/javascript"
+      src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDqubrU5ZLOeVplgi--fxTMCs0zNvNjlEI&sensor=true&libraries=visualization,geometry">
+    </script>
+    <script type="text/javascript" src="http://google-maps-utility-library-v3.googlecode.com/svn/trunk/markerclusterer/src/markerclusterer.js">
+    </script>
+    <script type='text/javascript' src='https://www.google.com/jsapi'></script>
+    <script type='text/javascript' src="http://code.jquery.com/jquery-1.9.1.min.js"></script>
+    <script type='text/javascript' src="http://code.jquery.com/ui/1.10.0/jquery-ui.js"></script>
+    {% load compress %}
+    {% compress js %}
+    <script type="text/coffeescript" charset="utf-8" src="/static/utils.coffee" />
+    {% endcompress %}
+    <script type="text/javascript">
+      google.load('visualization', '1', {packages:['table']});
+      var map;
+      var markersArray;
+      var addressArray;
+      var geocoder;
+      var infowindow;
+      var data = {{data|safe}}
+      var old_zoom_level;
+      var heatmap;
+      var block_groups;
+      var neighborhoods;
+      var bowdoin_geneva;
+      var mc;
+      var mapOptions;
+
+      var TILE_SIZE = 256;
+
+      //Mercator --BEGIN--
+      function bound(value, opt_min, opt_max) {
+          if (opt_min !== null) value = Math.max(value, opt_min);
+          if (opt_max !== null) value = Math.min(value, opt_max);
+          return value;
+      }
+
+      function degreesToRadians(deg) {
+          return deg * (Math.PI / 180);
+      }
+
+      function radiansToDegrees(rad) {
+          return rad / (Math.PI / 180);
+      }
+
+      function MercatorProjection() {
+          this.pixelOrigin_ = new google.maps.Point(TILE_SIZE / 2,
+          TILE_SIZE / 2);
+          this.pixelsPerLonDegree_ = TILE_SIZE / 360;
+          this.pixelsPerLonRadian_ = TILE_SIZE / (2 * Math.PI);
+      }
+
+      MercatorProjection.prototype.fromLatLngToPoint = function (latLng,
+      opt_point) {
+          var me = this;
+          var point = opt_point || new google.maps.Point(0, 0);
+          var origin = me.pixelOrigin_;
+
+          point.x = origin.x + latLng.lng() * me.pixelsPerLonDegree_;
+
+          // NOTE(appleton): Truncating to 0.9999 effectively limits latitude to
+          // 89.189.  This is about a third of a tile past the edge of the world
+          // tile.
+          var siny = bound(Math.sin(degreesToRadians(latLng.lat())), - 0.9999,
+          0.9999);
+          point.y = origin.y + 0.5 * Math.log((1 + siny) / (1 - siny)) * -me.pixelsPerLonRadian_;
+          return point;
+      };
+
+      MercatorProjection.prototype.fromPointToLatLng = function (point) {
+          var me = this;
+          var origin = me.pixelOrigin_;
+          var lng = (point.x - origin.x) / me.pixelsPerLonDegree_;
+          var latRadians = (point.y - origin.y) / -me.pixelsPerLonRadian_;
+          var lat = radiansToDegrees(2 * Math.atan(Math.exp(latRadians)) - Math.PI / 2);
+          return new google.maps.LatLng(lat, lng);
+      };
+
+      //Mercator --END--
+
+      /**
+       *  The function for calculating the cluster icon image.
+       *
+       *  @param {Array.<google.maps.Marker>} markers The markers in the clusterer.
+       *  @param {number} numStyles The number of styles available.
+       *  @return {Object} A object properties: 'text' (string) and 'index' (number).
+       *  @private
+       */
+      MarkerClusterer.prototype.calculator_ = function(markers, numStyles) {
+          var index = 0;
+          var count = markers.length;
+          var dv = count;
+          while (dv !== 0) {
+              dv = parseInt(dv / 5, 10);
+              index++;
+          }
+
+          index = Math.min(index, numStyles);
+          return {
+              text: count,
+              index: index
+          };
+      };
+
+
+
+      function initialize() {
+        //var data = {{data|safe}}
+        var table_data = new google.visualization.DataTable();
+        var map_type = data.map_type
+        var is_heatmap = map_type == 'heat_map';
+        var is_markerclusterer = map_type == 'markerclusterer';
+        var show_addresses = data.show_addresses;
+        var is_addresses = data.granularity == "Address" && show_addresses;
+        if(data.show_details || is_addresses){
+          table_data.addColumn('date', 'Date');
+          table_data.addColumn('string', 'Census '+data.granularity+' ID');
+          table_data.addColumn('string', 'Subject');
+          table_data.addColumn('string', 'Type');
+        }
+        else{
+          table_data.addColumn('string', data.granularity+' ID');
+          table_data.addColumn('string', 'Neighborhood');
+          table_data.addColumn('number', 'Disorder Count');
+          table_data.addColumn('number', 'Block Group population');
+          table_data.addColumn('number', 'Block Group Area');
+        }
+        var clusterStyles = [
+            {
+              url: "",
+              height: 5,
+              width: 5
+            }
+          ];
+        var default_cluster_styles = [
+            {
+            height: 53,
+            url: "http://google-maps-utility-library-v3.googlecode.com/svn/trunk/markerclusterer/images/m1.png",
+            width: 53
+            },
+            {
+            height: 56,
+            url: "http://google-maps-utility-library-v3.googlecode.com/svn/trunk/markerclusterer/images/m2.png",
+            width: 56
+            },
+            {
+            height: 66,
+            url: "http://google-maps-utility-library-v3.googlecode.com/svn/trunk/markerclusterer/images/m3.png",
+            width: 66
+            },
+            {
+            height: 78,
+            url: "http://google-maps-utility-library-v3.googlecode.com/svn/trunk/markerclusterer/images/m4.png",
+            width: 78
+            },
+            {
+            height: 90,
+            url: "http://google-maps-utility-library-v3.googlecode.com/svn/trunk/markerclusterer/images/m5.png",
+            width: 90
+            }
+        ]
+        mapOptions = {
+          center: new google.maps.LatLng(42.328, -71.060),
+          zoom: 12,
+          mapTypeId: google.maps.MapTypeId.TERRAIN,
+          gridSize: 15,
+          minimumClusterSize:1
+        };
+        var old_map_options = mapOptions
+        //if(is_heatmap){
+        //  mapOptions.styles = clusterStyles
+        //}
+        map = new google.maps.Map(document.getElementById("map_canvas"), mapOptions);
+        infowindow = new google.maps.InfoWindow();
+        markersArray = new Array();
+        addressArray = new Array();
+        var table_rows = new Array();
+        var heatmapData = new Array();
+        if(is_markerclusterer || data.show_details || is_heatmap || is_addresses){
+          for (var i=0;i<data.locations.length;i++){
+            info =  data.locations[i];
+            if(info.latitude && info.longitude){
+              ll = new google.maps.LatLng(info.latitude, info.longitude, true);
+              //For Marker Clusterer
+              if(is_markerclusterer || is_heatmap){
+                if(show_addresses){
+                  addMarker(ll, ""+info.date+ "<b> "+info.type +"</b>:<br/>"+info.address+": ("+info.areaid+")");
+                }else{
+                  addMarker(ll, ""+info.date+ "<b> "+info.type +"</b>");
+                }
+                if(is_addresses){
+                  heatmapData.push({location: ll, weight: 1});
+                }
+              }
+
+              if(show_addresses && data.is_default && info.address_latitude != null){
+                ll2 = new google.maps.LatLng(info.address_latitude, info.address_longitude, true);
+                addAddressMarker(ll2, ""+info.date+ "<b> "+info.type +"</b>:<br/>"+info.address);
+              }
+
+              //For table full of each incident 
+              if(data.show_details || is_addresses){
+                table_rows.push([new Date(info.date), info.areaid, info.subject, info.type]);
+              }
+            }
+          }
+        }
+        var area_identifier = data.area_identifier
+        for(var i=0;i<data.area_info.length;i++){
+          info = data.area_info[i]
+          if(info.coordinates){
+            ll = new google.maps.LatLng(info.coordinates.latitude, info.coordinates.longitude);
+            if(is_heatmap || true){
+              w = info.count
+              if(data.granularity == "Block Group" && data.data_type == "Physical"){
+                w = (w / Math.log(info.area));
+              }
+              if(data.granularity == "Block Group" && data.data_type == "Social"){
+                w = (w / Math.log(info.popden));
+              }
+              heatmapData.push({location: ll, weight: w});
+            }
+          }
+          
+          area_url = '<a href="?show_details=True&f_'+area_identifier+'='+info.areaid+'">'+info.areaid+'</a>'
+          neighborhood_url = '<a href="?show_details=True&f_nsa_name='+info.nsa_name+'">'+info.nsa_name+'</a>'
+          if(data.show_details == false){
+            table_rows.push([area_url, neighborhood_url, info.count, info.pop, info.area]);
+          }
+        
+        }
+        table_data.addRows(table_rows);
+        if(is_markerclusterer || is_heatmap){
+          mc = new MarkerClusterer(map, markersArray, mapOptions);
+          mc.setStyles(clusterStyles);
+
+          /**
+          * Triggers the clusterclick event and zoom's if the option is set.
+          */
+          ClusterIcon.prototype.triggerClusterClick = function() {
+          var markerClusterer = this.cluster_.getMarkerClusterer();
+
+          // Trigger the clusterclick event.
+          google.maps.event.trigger(markerClusterer, 'clusterclick', this.cluster_);
+
+          if (markerClusterer.isZoomOnClick()) {
+          // Zoom into the cluster.
+          // this.map_.fitBounds(this.cluster_.getBounds());
+
+          // modified zoom in function
+          this.map_.setZoom(map.zoom);
+
+           }
+          };
+
+           google.maps.event.addListener(mc, 'clusterclick', function(cluster) {
+             var content = '';
+          //   // Convert lat/long from cluster object to a usable MVCObject
+             var info = new google.maps.MVCObject;
+             info.set('position', cluster.center_);
+          //   //----
+          //   //Get markers
+             var markers = cluster.getMarkers();
+             var titles = "<p>";
+             //Get all the titles
+             for(var i = 0; i < markers.length; i++) {
+                 titles += markers[i].getTitle() + "<br />";
+             }
+             titles += "</p>"
+          //   //----
+            var infowindow = new google.maps.InfoWindow();
+            infowindow.close();
+            infowindow.setContent(titles); //set infowindow content to titles
+            infowindow.open(map, info);
+
+          });
+        }
+        var table = new google.visualization.Table(document.getElementById('table_div'));
+        table.draw(table_data, {allowHtml: true, showRowNumber: true, page:true, pageSize:1000});
+
+        if(is_heatmap){
+          heatmap = new google.maps.visualization.HeatmapLayer({
+            data: heatmapData,
+            dissipating: true,
+            radius: getNewRadius(),
+            map: map
+          });
+
+          google.maps.event.addListener(map, 'zoom_changed', function () {
+              heatmap.setOptions({radius:getNewRadius()});
+          });
+        }
+
+        if(show_addresses){
+          old_zoom_level = map.zoom;
+          google.maps.event.addListener(map, 'zoom_changed', function () {
+                var z = map.zoom;
+                if(is_heatmap && old_zoom_level < 16 && z >= 16){
+                  heatmap.setMap(null);
+                  if(data.is_default){
+                    mc.clearMarkers();
+                    mc.setStyles(default_cluster_styles); 
+                    mc.addMarkers(addressArray);
+                  }
+                  mc.setStyles(default_cluster_styles); 
+                }
+                else if(is_heatmap && old_zoom_level >= 16 && z < 16){
+                  heatmap.setMap(map);
+
+                  if(data.is_default){
+                    mc.clearMarkers();
+                    mc.setStyles(clusterStyles);
+                    mc.addMarkers(markersArray);
+                  }
+                  mc.setStyles(clusterStyles);
+                }
+                old_zoom_level = z;
+            });
+        }
+
+        block_groups = new google.maps.KmlLayer({
+            url:"https://sites.google.com/site/cityofbostondisorder/kml-files/bostonblockgroup.kml?attredirects=0&d=1",
+            preserveViewport:true,
+            map: null});
+
+        bowdoin_geneva = new google.maps.KmlLayer({
+            url:"https://sites.google.com/site/cityofbostondisorder/kml-files/bg_outline_no_fill.shp.kml?attredirects=0&d=1",
+            preserveViewport:true,
+            map: null});
+
+        neighborhoods = new google.maps.KmlLayer({
+            url:"https://sites.google.com/site/cityofbostondisorder/kml-files/bra_planning_districts.shp.kml?attredirects=0&d=1",
+            preserveViewport:true,
+            map: null});
+      }
+
+      //radius for heatmap points
+      var desiredRadiusPerPointInMeters = null;
+      if(data.granularity == "Block"){
+        desiredRadiusPerPointInMeters = 300;
+      }else if(data.granularity == "Block Group"){
+        desiredRadiusPerPointInMeters = 500;
+      }else if(data.granularity == "Census Tract"){
+        desiredRadiusPerPointInMeters = 1000;
+      }else{
+        desiredRadiusPerPointInMeters = 200;
+      }
+
+      $(function() {
+        $("#start_date").datepicker();
+      });
+
+      $(function() {
+        $("#end_date").datepicker();
+      });
+
+      function addMarker(location, desc, count) {
+        marker = new google.maps.Marker({
+          position: location,
+          //icon: getCircle(count)
+          //map: map
+          title:desc
+        });
+        //var fn = markerClickFunction(location,desc);
+        //google.maps.event.addListener(marker, 'click', fn);
+        markersArray.push(marker);
+      }
+
+      function addAddressMarker(location, desc, count) {
+        marker = new google.maps.Marker({
+          position: location,
+          title:desc
+        });
+        //var fn = markerClickFunction(location,desc);
+        //google.maps.event.addListener(marker, 'click', fn);
+        addressArray.push(marker);
+      }
+
+
+      function markerClickFunction(location, desc){
+        return function(e){
+          var infoHtml = '<div>'+desc+'</div>';
+          infowindow.setContent(infoHtml);
+          infowindow.setPosition(location);
+          infowindow.open(map);
+        }
+      }
+
+      function getNewRadius() {
+        var numTiles = 1 << map.getZoom();
+        var center = map.getCenter();
+        var moved = google.maps.geometry.spherical.computeOffset(center, 10000, 90); /*1000 meters to the right*/
+        var projection = new MercatorProjection();
+        var initCoord = projection.fromLatLngToPoint(center);
+        var endCoord = projection.fromLatLngToPoint(moved);
+        var initPoint = new google.maps.Point(
+          initCoord.x * numTiles,
+          initCoord.y * numTiles);
+        var endPoint = new google.maps.Point(
+          endCoord.x * numTiles,
+          endCoord.y * numTiles);
+        var pixelsPerMeter = (Math.abs(initPoint.x-endPoint.x))/10000.0;
+        var totalPixelSize = Math.floor(desiredRadiusPerPointInMeters*pixelsPerMeter);
+        return totalPixelSize;
+  
+      }
+    </script>
+  </head>
+  <body onload="initialize()">
+    <div id="navigation">
+    <ul class="drop">
+      <li style="background:red">Now Viewing: {{display_type}}</li>
+      <li><a id="physical_disorder" href="#">Physical Disorder</a><a id="i_physical_disorder" class="info_link" href="#"></a>
+        <ul>
+          <li><a id="private" href="#">Private Neglect</a><a id="i_private" class="info_link" href="#"></a>
+            <ul>
+                <li><a id="housing" href="#">Housing</a><a id="i_housing" class="info_link" href="#"></a></li>
+                <li><a id="uncivil_use" href="#">Uncivil Use</a><a id="i_uncivil_use" class="info_link" href="#"></a></li>
+                <li><a id="big_buildings" href="#">Big Buildings</a><a id="i_big_buildings" class="info_link" href="#"></a></li>
+            </ul>
+          </li>
+          <li><a id="public" href="#">Public Denigration</a><a id="i_public" class="info_link" href="#"></a>
+            <ul>
+                <li><a id="graffiti" href="#">Graffiti</a><a id="i_graffiti" class="info_link" href="#"></a></li>
+                <li><a id="trash" href="#">Trash</a><a id="i_trash" class="info_link" href="#"></a></li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+        <li><a id="social_disorder" href="#">Social Disorder</a><a id="i_social_disorder" class="info_link" href="#"></a>
+          <ul>
+            <li><a id="public_social_disorder" href="#">Public Social Disorder</a><a id="i_public_social_disorder" class="info_link" href="#"></a></li>
+            <li><a id="socstrife" href="#">Social Strife</a><a id="i_socstrife" class="info_link" href="#"></a></li>
+            <li><a id="alcohol" href="#">Alcohol</a><a id="i_alcohol" class="info_link" href="#"></a></li>
+            <li><a id="interpersonal_violence" href="#">Interpersonal Violence</a><a id="i_interpersonal_violence" class="info_link" href="#"></a></li>
+            <li><a id="guns" href="#">Prevalence of Guns</a><a id="i_guns" class="info_link" href="#"></a></li>
+          </uL>
+        </li>
+        <li><a id="medical_emergency" href="#">Medical Emergencies</a><a id="i_medical_emergency" class="info_link" href="#"></a>
+          <ul>
+            <li><a id="major_medical_emergency" href="#">Major Medical</a><a id="i_major_medical_emergency" class="info_link" href="#"></a></li>
+            <li><a id="youth_health" href="#">Youth Health</a><a id="i_youth_health" class="info_link" href="#"></a></li>
+            <!--<li><a id="no_med" href="#">No Med</a><a id="i_no_med" class="info_link" href="#"></a></li>-->
+          </ul>
+        </li>
+    </ul>
+
+    <a href="#" class="help" id="help">Advanced Options</a>
+  </div>
+    <div id="help_modal" class="no_show" style="display: none">
+      <div id="datepicker">
+        <b>Date picker</b>
+        <p>Start Date: <input type="text" id="start_date" /></p>
+        <p>End Date: <input type="text" id="end_date" /></p>
+      </div>
+
+            <a href='#' class="button" id="apply">Apply</a>
+
+      <div id="filter">
+        <form class="filter_form"><b>Filter</b>
+          <input value="" type="text" id="f_type" placeholder="Field"/>
+          <input value="" type="text" id="f_val" placeholder="Value"/>
+        </form>
+
+        <form class="filter_form"><b>Compare Neighborhoods</b>
+          <input value="" type="text" id="f_nsa_name__in" placeholder="Neighborhoods"/>
+          <br/>
+          Enter neighborhood names separated by a comma
+        </form>
+      </div>
+    
+
+      <ul id="granularity" class="drop">
+        <li>Granularity: {{granularity}}</a>
+          <ul>
+            <li><a id="census_tract" href="#">Census Tract</a></li>
+            <li><a id="block_group" href="#">Block Group</a></li>
+            <li><a id="block" href="#">Block</a></li>
+            <li><a id="address" href="#">Address</a></li>
+          </ul>
+        </li>
+      </ul>
+      
+      <div class="toggle">
+        <a href='#' class="button" id="toggle_numbers">Toggle Numbers</a>
+        <a href='#' class="button" id="toggle_cbgs">Toggle CBGs</a>
+        <a href='#' class="button" id="toggle_neighborhoods">Toggle Neighborhoods</a>
+        <a href='#' class="button" id="toggle_bowdoin_geneva">Toggle Bowdoin Geneva</a>
+      </div>
+    </div>
+
+    <div id="dialog-message" title=" ">
+    </div>
+    <div id="map_canvas"></div>
+    <div id='table_div'></div>
+  </body>
+</html>

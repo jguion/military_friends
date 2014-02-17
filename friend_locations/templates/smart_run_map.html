@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+  	<head>
+	    <meta name="viewport" content="initial-scale=1.0, user-scalable=no">
+    	<meta charset="utf-8">
+	    <link rel="stylesheet" href="/static/main.css" type="text/css" />
+		<!--<link rel="stylesheet" href="http://code.jquery.com/ui/1.10.2/themes/smoothness/jquery-ui.css" />
+		<script type='text/javascript' src="http://code.jquery.com/ui/1.10.0/jquery-ui.js"></script>
+	    <script type='text/javascript' src='https://www.google.com/jsapi'></script>-->
+	  	<script type="text/javascript"
+	      src="https://maps.googleapis.com/maps/api/js?v=3.exp&sensor=true">
+	    </script>
+	    <script type='text/javascript' src="http://code.jquery.com/jquery-1.9.1.min.js"></script>
+	    
+	    <script type="text/javascript">
+	    	var data = {{data|safe}};
+	    	//var markersArray;
+	    	var map;
+
+	    	function initialize() {
+		    	mapOptions = {
+		          zoom: 12,
+    			  center: new google.maps.LatLng(30.434373, -88.908920)
+		        };
+		    	map = new google.maps.Map(document.getElementById("map_canvas"), mapOptions);
+
+		    	for (var i=0;i<data.locations.length;i++){
+		            info =  data.locations[i];
+		            if(info.latitude && info.longitude){
+		              ll = new google.maps.LatLng(info.latitude, info.longitude, true);
+		              addMarker(ll, info.user);
+		          }
+		        }
+		    }
+
+
+
+	    	function addMarker(location, user) {
+		        marker = new google.maps.Marker({
+		          position: location,
+		          //icon: getCircle(count)
+		          map: map,
+		          title:user
+		        });
+
+		        google.maps.event.addListener(marker, 'click', function() {
+		        	var info = new google.maps.MVCObject;
+             		info.set('position', location);
+		        	var infowindow = new google.maps.InfoWindow();
+		            infowindow.close();
+		            infowindow.setContent(user); //set infowindow content to titles
+		            infowindow.open(map, info);
+		        //markersArray.push(marker);
+		      	});
+		      }
+
+		     google.maps.event.addDomListener(window, 'load', initialize);
+
+	    </script>
+	</head>
+	<body>
+		<h1>God View</h1>
+		<div id="map_canvas"></div>
+	</body>
+</html>
